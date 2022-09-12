@@ -78,3 +78,5 @@ dbus-monitor --monitor --system "path='/org/freedesktop/home1',member='ActivateH
 	fi
 	activateFlag=false
 done	
+
+return 1
