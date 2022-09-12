@@ -16,13 +16,13 @@ zfs_setup_homed_datasets() {
 	echo "${2}" | grep -q -i -e 'HOMED$' && zfsHomedRoot="${2}"
 	
 	[[ -z ${username} ]] && read -p "Enter username to create: " username
-	[[ -z ${zfsHomedRoot} ]] && zfs list -H -o value name -a | grep -q -i -E 'HOMED$' && zfsHomedRoot="$(zfs list -H -o value name -a | grep -i -E 'HOMED$')"
+	[[ -z ${zfsHomedRoot} ]] && zfs list -H -o name | grep -q -i -E 'HOMED$' && zfsHomedRoot="$(zfs list -H -o name | grep -i -E 'HOMED$')"
 	while [[ -z ${zfsHomedRoot} ]] || ! echo "${zfsHomedRoot}" | grep -q -i -E 'HOMED$'; do
 		read -p "Enter ZFS dataset name to use as root HOMED directory: " zfsHomedRoot
 		echo "${zfsHomedRoot}" | grep -q -i -E 'HOMED$' || echo "invalid dataset name. Must be of the form <POOL>/<...>/HOMED" >&2
 	done
 		
-	if zfs list -H -o value name -a | grep -q -F "${zfsHomedRoot}/${username}"; then
+	if zfs list -H -o name | grep -q -F "${zfsHomedRoot}/${username}"; then
 		zfs set mountpoint=none "${zfsHomedRoot}/${username}"
 	else
 		zfs create -p -o mountpoint=none "${zfsHomedRoot}/${username}" 

@@ -3,7 +3,6 @@
 zfs_homed_mount() {
 
 	local username
-	local identity
 	local tries
 	local zfsHomedRoot
 
@@ -37,16 +36,26 @@ zfs_homed_mount() {
 	[[ "$(homectl inspect "${username}" | grep 'State' | sed -E s/'.*State\: '//)" == 'active' ]] || return 1
 
 	[[ "$(zfs get keystatus "${zfsHomedRoot}/${username}/data" -H -o value)" == 'available' ]] || zfs load-key "${zfsHomedRoot}/${username}/data"
-
-	identity="$(cat "/home/${username}/.identity")"
-
-	umount "/dev/mapper/home-${username}"
+	
+	mkdir -p "/tmp/zfs-homed-mount/home-${username}"
+	
+	# touch "/tmp/zfs-homed-mount/home-${username}/.identity"
+	# mount -o bind,rw "/home/${username}" "/tmp/zfs-homed-mount/home-${username}"
+	# umount "/dev/mapper/home-${username}"
+	
+	mount -o move "/home/${username}" "/tmp/zfs-homed-mount/home-${username}"
+	
 	cat /proc/mounts | grep -q -F "/dev/mapper/home-${username}" && umount -l "/dev/mapper/home-${username}"
 	sleep 0.5s
 
 	[[ "$(zfs get mounted "${zfsHomedRoot}/${username}/data" -H -o value)" == 'yes' ]] || zfs mount "${zfsHomedRoot}/${username}/data"
 	
-	echo "${identity}" > "/home/${username}/.identity"
+	[[ -f "/home/${username}/.identity" ]] || touch "/home/${username}/.identity"
+	
+	mount -o bind,rw "/tmp/zfs-homed-mount/home-${username}/.identity" "/home/${username}/.identity"
+	umount "/tmp/zfs-homed-mount/home-${username}"
+
+	chown "${username}":"${username}" "/home/${username}/.identity"
 
 	# echo "mounted ZFS home directory to /home/${username}" >&2
 
