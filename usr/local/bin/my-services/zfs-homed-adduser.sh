@@ -1,6 +1,6 @@
 #!/bin/bash
 
-zfs_setup_homed_datasets() {
+zfs_homed_adduser() {
 # CREATES THE REQUIRED ZFS DATASETS AND VOLUMES FOR A GIVES USER
 # $1 is user name. If missing you will be prompted for one
 # $2 is the ZFS root for homed stuff. Must be called HOMED and given as <POOL>/<...>/HOMED. 
@@ -82,4 +82,4 @@ zfs_setup_homed_datasets() {
 	
 }
 
-zfs_setup_homed_datasets "${@}"
+zfs_homed_adduser "${@}"
