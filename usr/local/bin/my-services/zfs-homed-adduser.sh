@@ -28,7 +28,7 @@ zfs_setup_homed_datasets() {
 		zfs create -p -o mountpoint=none "${zfsHomedRoot}/${username}" 
 	fi
 	
-	zfs create -s -V "${zfsHomedRoot}/${username}/key" $(zfs get -H -o value -p size "${zfsHomedRoot%%/*}")
+	zfs create -s -V $(zpool get -H -o value -p size "${zfsHomedRoot%%/*}") "${zfsHomedRoot}/${username}/key" 
 	
 	systemctl enable systemd-homed.service
 	
@@ -36,24 +36,27 @@ zfs_setup_homed_datasets() {
 	
 	homectl create --home-dir="/home/${username}" --member-of=wheel --disk-size=1G --storage=luks --image-path="/dev/zvol/${zfsHomedRoot}/${username}/key" --fs-type=btrfs --auto-resize-mode="shrink-and-grow" --luks-cipher=aes --luks-cipher-mode=xts-plain64 --luks-volume-key-size=64 --luks-pbkdf-type=argon2id --kill-processes=true "${username}"
 	
+	homectl authenticate "${username}"
 	homectl activate "${username}"
 	
-	mkdir "/home/${username}/.zfs"
+	mkdir -p "/tmp/home-${username}"
+	
+	cp -a "/home/${username}"/* "/home/${username}"/.*  "/tmp/home-${username}"
+	echo '' > "/tmp/home-${username}/.identity"
+	
+	mkdir -p "/home/${username}/.zfs"
 	
 	openssl rand -out "/home/${username}/.zfs/key.zfs" 32
 	
-	zfs create -n -o mountpoint="/home/${username}" -o encryption=aes-256-gcm -o keyformat=raw -o keylocation="file:///home/${username}/.zfs/key.zfs" "${zfsHomedRoot}/${username}/data" 
+	zfs create -o mountpoint=none -o encryption=aes-256-gcm -o keyformat=raw -o keylocation="file:///home/${username}/.zfs/key.zfs" "${zfsHomedRoot}/${username}/data" 
 	
 	zfs load-key "${zfsHomedRoot}/${username}/data" 
-	
-	mkdir "/tmp/home-${username}"
-	
-	cp -a "/home/${username}"/* "/home/${username}"/.*  "/tmp/home-${username}"
 	
 	umount "/dev/mapper/home-${username}"
 	cat /proc/mounts | grep -q -F "/dev/mapper/home-${username}" && umount -l "/dev/mapper/home-${username}"
 	
-	zfs mount "${zfsHomedRoot}/${username}/data" 
+	zfs set mountpoint="/home/${username}" "${zfsHomedRoot}/${username}/data" 
+	zfs get -H -o value mounted "${zfsHomedRoot}/${username}/data" | grep -q 'yes' || zfs mount "${zfsHomedRoot}/${username}/data" 
 	
 	cp -a "/tmp/home-${username}"/* "/tmp/home-${username}"/.* "/home/${username}"
 	
