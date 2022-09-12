@@ -23,8 +23,24 @@ zfs_homed_adduser() {
 		echo "${zfsHomedRoot}" | grep -q -i -E 'HOMED$' || echo "invalid dataset name. Must be of the form <POOL>/<...>/HOMED" >&2
 	done
 
-	
 	tmpdirMnt="$(mktmp -p "/tmp/homed_zfs_adduser" -b "home-${username}-" -D)" || tmpdirMnt="/tmp/homed_zfs_adduser/home-${username}"
+	
+	systemctl stop systemd-homed.service
+	
+	if [[ -d /etc/systemd/system/systemd-homed.service.d ]]; then
+		mkdir -p "${tmpdirMnt}/systemd-homed.service.d"
+		cp -a /etc/systemd/system/systemd-homed.service.d/*  "${tmpdirMnt}/systemd-homed.service.d"
+		systemctl revert systemd-homed.service
+	else
+		mkdir -p "${tmpdirmnt}"
+	fi
+	
+	systemctl disable systemd-homed-zfs-mount.service
+	systemctl disable systemd-homed-zfs-umount.service
+	systemctl mask systemd-homed-zfs-mount.service
+	systemctl mask systemd-homed-zfs-umount.service
+	systemctl enable systemd-homed.service
+	systemctl start systemd-homed.service
 	
 	if zfs list -H -o name | grep -q -F "${zfsHomedRoot}/${username}"; then
 		zfs set mountpoint=none "${zfsHomedRoot}/${username}"
@@ -35,10 +51,7 @@ zfs_homed_adduser() {
 	zpool get -H -o value altroot "${zfsHomedRoot%%/*}" | grep -q '-' || mount -o bind,rw "/home/${username}" "$(zpool get -H -o value altroot "${zfsHomedRoot%%/*}")/home/${username}"
 	
 	zfs create -s -V $(zpool get -H -o value -p size "${zfsHomedRoot%%/*}") "${zfsHomedRoot}/${username}/key" 
-	
-	systemctl enable systemd-homed.service
-	systemctl mask systemd-homed-zfs-mount.service
-	
+
 	setenforce 0
 	
 	homectl create --home-dir="/home/${username}" --member-of=wheel --disk-size=1G --storage=luks --image-path="/dev/zvol/${zfsHomedRoot}/${username}/key" --fs-type=btrfs --auto-resize-mode="shrink-and-grow" --luks-cipher=aes --luks-cipher-mode=xts-plain64 --luks-volume-key-size=64 --luks-pbkdf-type=argon2id --kill-processes=true "${username}"
@@ -70,15 +83,24 @@ zfs_homed_adduser() {
 	touch "/home/${username}/.identity'
 	
 	mount -o bind,rw "${tmpdirmnt}/.identity"  "/home/${username}/.identity'
-	umount "${tmpdirmnt}"
+	umount "${tmpdirMnt}"
 	cat /proc/mounts | grep -q -F "${tmpdirmnt}" && umount -l "${tmpdirmnt}"
 	
 	homectl deactivate "${username}"
 	
+	zfs unload-key "${zfsHomedRoot}/${username}/data" 
 	
+	[[ -d "${tmpdirMnt}/systemd-homed.service.d" ]] && cp -a "${zfsHomedRoot}/${username}/data" "/etc/systemd/system/systemd-homed.service.d/"
+	
+	systemctl stop systemd-homed.service
 	systemctl unmask systemd-homed-zfs-mount.service
+	systemctl unmask systemd-homed-zfs-umount.service
 	systemctl enable systemd-homed-zfs-mount.service 2>/dev/null
-	systemctl restart systemd-homed.service
+	systemctl enable systemd-homed-zfs-umount.service 2>/dev/null
+	systemctl start systemd-homed.service
+	
+	
+	homectl activate "${username}"
 	
 }
 
