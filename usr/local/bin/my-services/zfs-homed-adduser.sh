@@ -10,7 +10,8 @@ zfs_setup_homed_datasets() {
 
 	local username
 	local zfsHomedRoot
-	
+	local tmpdirMnt
+	local mvFiles
 	
 	username="${1}"
 	echo "${2}" | grep -q -i -e 'HOMED$' && zfsHomedRoot="${2}"
@@ -21,16 +22,22 @@ zfs_setup_homed_datasets() {
 		read -p "Enter ZFS dataset name to use as root HOMED directory: " zfsHomedRoot
 		echo "${zfsHomedRoot}" | grep -q -i -E 'HOMED$' || echo "invalid dataset name. Must be of the form <POOL>/<...>/HOMED" >&2
 	done
-		
+
+	
+	tmpdirMnt="$(mktmp -p "/tmp/homed_zfs_adduser" -b "home-${username}-" -D)" || tmpdirMnt="/tmp/homed_zfs_adduser/home-${username}"
+	
 	if zfs list -H -o name | grep -q -F "${zfsHomedRoot}/${username}"; then
 		zfs set mountpoint=none "${zfsHomedRoot}/${username}"
 	else
 		zfs create -p -o mountpoint=none "${zfsHomedRoot}/${username}" 
 	fi
 	
+	zpool get -H -o value altroot "${zfsHomedRoot%%/*}" | grep -q '-' || mount -o bind,rw "/home/${username}" "$(zpool get -H -o value altroot "${zfsHomedRoot%%/*}")/home/${username}"
+	
 	zfs create -s -V $(zpool get -H -o value -p size "${zfsHomedRoot%%/*}") "${zfsHomedRoot}/${username}/key" 
 	
 	systemctl enable systemd-homed.service
+	systemctl mask systemd-homed-zfs-mount.service
 	
 	setenforce 0
 	
@@ -39,10 +46,7 @@ zfs_setup_homed_datasets() {
 	homectl authenticate "${username}"
 	homectl activate "${username}"
 	
-	mkdir -p "/tmp/home-${username}"
-	
-	cp -a "/home/${username}"/* "/home/${username}"/.*  "/tmp/home-${username}"
-	echo '' > "/tmp/home-${username}/.identity"
+	mkdir -p "${tmpdirMnt}"
 	
 	mkdir -p "/home/${username}/.zfs"
 	
@@ -52,17 +56,29 @@ zfs_setup_homed_datasets() {
 	
 	zfs load-key "${zfsHomedRoot}/${username}/data" 
 	
-	umount "/dev/mapper/home-${username}"
-	cat /proc/mounts | grep -q -F "/dev/mapper/home-${username}" && umount -l "/dev/mapper/home-${username}"
+	mount -o bind,rw /home/${username}" "${tmpdirMnt}"
+	
+	umount "/home/${username}"
+	cat /proc/mounts | grep -q -F "/home/${username}" && umount -l "/home/${username}"
 	
 	zfs set mountpoint="/home/${username}" "${zfsHomedRoot}/${username}/data" 
 	zfs get -H -o value mounted "${zfsHomedRoot}/${username}/data" | grep -q 'yes' || zfs mount "${zfsHomedRoot}/${username}/data" 
 	
-	cp -a "/tmp/home-${username}"/* "/tmp/home-${username}"/.* "/home/${username}"
+	mapfile -t mvFiles < <(find "${tmpdirMnt}" -maxdepth 1 | grep -v '.zfs' | grep -v '.identity')
 	
-	rm -rf "/tmp/home-${username}"
+	\cp -af "${mvFiles[@]}" "/home/${username}"
+	touch "/home/${username}/.identity'
+	
+	mount -o bind,rw "${tmpdirmnt}/.identity"  "/home/${username}/.identity'
+	umount "${tmpdirmnt}"
+	cat /proc/mounts | grep -q -F "${tmpdirmnt}" && umount -l "${tmpdirmnt}"
 	
 	homectl deactivate "${username}"
+	
+	
+	systemctl unmask systemd-homed-zfs-mount.service
+	systemctl enable systemd-homed-zfs-mount.service 2>/dev/null
+	systemctl restart systemd-homed.service
 	
 }
 
