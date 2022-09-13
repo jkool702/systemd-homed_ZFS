@@ -24,6 +24,7 @@ zfs_homed_adduser() {
 	done
 
 	tmpdirMnt="$(mktmp -p "/tmp/homed_zfs_adduser" -b "home-${username}-" -D)" || tmpdirMnt="/tmp/homed_zfs_adduser/home-${username}"
+	mkdir -p "${tmpdirMnt}"
 	
 	systemctl stop systemd-homed.service
 	
@@ -31,8 +32,6 @@ zfs_homed_adduser() {
 		mkdir -p "${tmpdirMnt}/systemd-homed.service.d"
 		cp -a /etc/systemd/system/systemd-homed.service.d/*  "${tmpdirMnt}/systemd-homed.service.d"
 		systemctl revert systemd-homed.service
-	else
-		mkdir -p "${tmpdirmnt}"
 	fi
 	
 	systemctl disable systemd-homed-zfs-mount.service
@@ -48,8 +47,14 @@ zfs_homed_adduser() {
 		zfs create -p -o mountpoint=none "${zfsHomedRoot}/${username}" 
 	fi
 	
-	zpool get -H -o value altroot "${zfsHomedRoot%%/*}" | grep -q '-' || mount -o bind,rw "/home/${username}" "$(zpool get -H -o value altroot "${zfsHomedRoot%%/*}")/home/${username}"
-	
+	if ! zpool get -H -o value altroot "${zfsHomedRoot%%/*}" | grep -q '-'; then
+	       for nn in /home/*; do
+			cat /proc/mounts | grep -q -F "/sysroot${nn}" || mount -o bind,rw "${nn}" "/sysroot${nn}"
+			chown "${nn##*/}":"${nn##*/}" "/sysroot${nn}"
+	       done
+	       mount -o bind,rw  "$(zpool get -H -o value altroot "${zfsHomedRoot%%/*}")/home" /home
+	fi
+
 	zfs create -s -V $(zpool get -H -o value -p size "${zfsHomedRoot%%/*}") "${zfsHomedRoot}/${username}/key" 
 
 	setenforce 0
@@ -59,8 +64,6 @@ zfs_homed_adduser() {
 	homectl authenticate "${username}"
 	homectl activate "${username}"
 	
-	mkdir -p "${tmpdirMnt}"
-	
 	mkdir -p "/home/${username}/.zfs"
 	
 	openssl rand -out "/home/${username}/.zfs/key.zfs" 32
@@ -69,34 +72,36 @@ zfs_homed_adduser() {
 	
 	zfs load-key "${zfsHomedRoot}/${username}/data" 
 	
-	mount -o bind,rw /home/${username}" "${tmpdirMnt}"
+	#mount -o bind,rw "/home/${username}" "${tmpdirMnt}"
 	
-	umount "/home/${username}"
-	cat /proc/mounts | grep -q -F "/home/${username}" && umount -l "/home/${username}"
+	umount "/dev/mapper/home-${username}"
+	cat /proc/mounts | grep -q -F "/dev/mapper//home-${username}" && umount -l "/dev/mapper//home-${username}"
 	
 	zfs set mountpoint="/home/${username}" "${zfsHomedRoot}/${username}/data" 
 	zfs get -H -o value mounted "${zfsHomedRoot}/${username}/data" | grep -q 'yes' || zfs mount "${zfsHomedRoot}/${username}/data" 
 	
-	mapfile -t mvFiles < <(find "${tmpdirMnt}" -maxdepth 1 | grep -v '.zfs' | grep -v '.identity')
+	mapfile -t mvFiles < <(find "${tmpdirMnt}" -maxdepth 1 | grep -v -F '.zfs' | grep -v -F '.identity')
 	
 	\cp -af "${mvFiles[@]}" "/home/${username}"
-	touch "/home/${username}/.identity'
 	
-	mount -o bind,rw "${tmpdirmnt}/.identity"  "/home/${username}/.identity'
+	ln -s "/var/lib/systemd/home/${username}.identity" "/home/${username}/.identity"
+	#touch "/home/${username}/.identity"
+	#mount -o bind,rw "${tmpdirMnt}/.identity"  "/home/${username}/.identity"
 	umount "${tmpdirMnt}"
-	cat /proc/mounts | grep -q -F "${tmpdirmnt}" && umount -l "${tmpdirmnt}"
+	cat /proc/mounts | grep -q -F "${tmpdirMnt}" && umount -l "${tmpdirMnt}"
 	
 	homectl deactivate "${username}"
 	
 	zfs unload-key "${zfsHomedRoot}/${username}/data" 
 	
-	[[ -d "${tmpdirMnt}/systemd-homed.service.d" ]] && cp -a "${zfsHomedRoot}/${username}/data" "/etc/systemd/system/systemd-homed.service.d/"
+	[[ -d "${tmpdirMnt}/systemd-homed.service.d" ]] && mkdir -p /etc/systemd/system/systemd-homed.service.d/ && cp -a "${tmpdirMnt}/systemd-homed.service.d"/* "/etc/systemd/system/systemd-homed.service.d/"
 	
 	systemctl stop systemd-homed.service
 	systemctl unmask systemd-homed-zfs-mount.service
 	systemctl unmask systemd-homed-zfs-umount.service
 	systemctl enable systemd-homed-zfs-mount.service 2>/dev/null
 	systemctl enable systemd-homed-zfs-umount.service 2>/dev/null
+	systemctl enable systemd-homed.service
 	systemctl start systemd-homed.service
 	
 	

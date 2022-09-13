@@ -6,6 +6,7 @@ zfs_homed_mount() {
 	local tries
 	local zfsHomedRoot
 	local tmpdir
+	#local mntOpts
 	
 	# echo "running zfs_homed_mount" >&2
 
@@ -40,7 +41,7 @@ zfs_homed_mount() {
 			# wait until homed considers the home area active and/or the /dev/mapper/home-$username device appears and is mounted to /home/$username or the zfs keyfile appears
 			{ [[ "$(homectl inspect "${username}" | grep 'State' | sed -E s/'.*State\: '//)" == 'active' ]] || { dmsetup ls | grep -q -F "home-${username}" && cat /proc/mount | grep -F "/dev/mapper/home-${username}" | grep -q -F "/home/${username}"; } || [[ -f "$(zfs get keylocation "${zfsHomedRoot}/${username}/data" -H -o value | sed -E s/'^file\:\/\/'//)" ]]; } && break
 
-			((tries++)
+				((tries++))
 			sleep 0.2s
 		done
 	fi
@@ -52,37 +53,53 @@ zfs_homed_mount() {
 	# if ZFS homedir is already mounted and the identity file already bind-mounted then this is a unneeded duplicate call, so return
 	{ [[ "$(zfs get mounted "${zfsHomedRoot}/${username}/data" -H -o value)" == 'yes' ]] && cat /proc/mounts | greq -q -F "/home/${username}/.identity"; }  && return 0
 	
-	# load zfs key if not already loaded
-	[[ "$(zfs get keystatus "${zfsHomedRoot}/${username}/data" -H -o value)" == 'available' ]] || zfs load-key "${zfsHomedRoot}/${username}/data"
-	
 	# make tmpdir
 	mkdir -p "/tmp/zfs-homed-mount/home-${username}"
-	tmpdir="$(mktmp -p "/tmp/zfs-homed-mount/home-${username}" -d)" || tmpdir="/tmp/zfs-homed-mount/home-${username}/tmp.x}" 
+	tmpdir="$(mktmp -p "/tmp/zfs-homed-mount/home-${username}" -d)" || tmpdir="/tmp/zfs-homed-mount/home-${username}/tmp.x" 
 	mkdir -p "${tmpdir}"; 
 	
-	# bind mount systemd-mounted home dir to $tmpdir then umount from /home/$username
+	# umount systemd-mounted home dir then remolunt it to $tmpdir 
+
+	mntOpts="$(cat /proc/mounts | grep -F "/dev/mapper/home-${username}" | grep -F "/home/${USERNAME}" | awk '{print $4}')"
 	
-	mount -o bind,rw "/dev/mapper/home-${username}" "${tmpdir}"
-	sleep 0.2s
+	#umount "/dev/mapper/home-${username}" 
+	#sleep 0.2s
 	
-	umount "/dev/mapper/home-${username}" 
-	sleep 0.2s
+	#cat /proc/mounts | grep -q -F "/dev/mapper/home-${username}" && umount -l "/dev/mapper/home-${username}"
+	#sleep 0.2s
+
+	#mount "/dev/mapper/home-${username}" "${tmpdir}" -o "${mntOpts}"
+	#sleep 0.2s
 	
-	cat /proc/mounts | grep -q -F "/dev/mapper/home-${username}" && umount -l "/dev/mapper/home-${username}"
+	mount "/home/${username}" "${tmpdir}" -o bind,rw""
 	sleep 0.2s
 
+	umount "/home/${username}"
+	sleep 0.2s
+
+	cat /proc/mounts | grep -q -F "/home/${username}" && umount -l "/home/${username}"
+        sleep 0.2s
+
+	# load zfs key if not already loaded
+	[[ "$(zfs get keystatus "${zfsHomedRoot}/${username}/data" -H -o value)" == 'available' ]] || zfs load-key "${zfsHomedRoot}/${username}/data"
+	sleep 0.2s
+	
 	# mount zfs dataset to /home/$username
 	[[ "$(zfs get mounted "${zfsHomedRoot}/${username}/data" -H -o value)" == 'yes' ]] || zfs mount "${zfsHomedRoot}/${username}/data" 2>/dev/null
 	sleep 0.2s
 	
 	# bind mount identity file back onto /home/$username/.identity if it isnt already there
 	[[ -f "/home/${username}/.identity" ]] || touch "/home/${username}/.identity"
-	cat /proc/mounts | greq -q -F "/home/${username}/.identity" || mount -o bind,rw "/tmp/zfs-homed-mount/home-${username}/${username}/.identity" "/home/${username}/.identity"
+	cat /proc/mounts | grep -q -F "/home/${username}/.identity" || mount -o bind,rw "${tmpdir}/.identity" "/home/${username}/.identity"
+	#cat /proc/mounts | grep -q -F "/home/${username}/.identity" || mount -o bind,rw "${tmpdir}/${username}/.identity" "/home/${username}/.identity"
+	#mount -o bind,rw "${tmpdir}/${username}/.identity" "/home/${username}/.identity"
 	sleep 0.2s
 	
 	# umount the systemd-homed home dir mounted at $tmpdir
-	umount "/tmp/zfs-homed-mount/home-${username}"
-	cat /proc/mounts | grep -q -F  "/tmp/zfs-homed-mount/home-${username}" && umount -l "/tmp/zfs-homed-mount/home-${username}"
+	umount "${tmpdir}"
+	sleep 0.2s
+	cat /proc/mounts | grep -q -F  "${tmpdir}" && umount -l "${tmpdir}"
+	sleep 0.2s
 
 	# ensure $username own the identity file
 	chown "${username}":"${username}" "/home/${username}/.identity"
@@ -101,7 +118,7 @@ tmpfile_wrapper() {
 	
 	# make a tmpfile at /tmp/zfs-homed-mount/.tmpfiles/$USER-<...> and write pid to it
 	
-	pid_cur="${echo $$}"
+	pid_cur="$(echo $$)"
 	
 	tmpfile="$(mktmp --tmp-dir="/tmp/zfs-homed-mount/.tmpfiles" --base="${*// /}-")" || tmpfile="/tmp/zfs-homed-mount/.tmpfiles/${*// /}-x"
 	
@@ -119,7 +136,7 @@ tmpfile_wrapper() {
 		done
 	fi
 
-	zfs_homed_mount "${@}" || echo "Home area for user ${@} either could not be accessed or could not be activated" >&2
+	zfs_homed_mount "${@}" || echo "Home area for user ${*// /} either could not be accessed or could not be activated" >&2
 	
 	\rm -f "${tmpfile}"	
 	
