@@ -31,8 +31,8 @@ zfs_homed_umount() {
 	        username="$(echo "${username}" | awk -F '/' '{print $2}')"
 	else
 		while (( ${tries} < 500 )); do
-			{ [[ "$(homectl inspect "${username}" | grep 'State' | sed -E s/'.*State\: '//)" == 'inactive' ]] && ! { dmsetup ls | grep -q -F "home-${username}" || cat /proc/mounts | grep -q -F "/dev/mapper/home-${username}"; } && ! zfs get mounted "${zfsHomedRoot}/${username}/data" -H -o value | grep -q 'yes'; } && break
-			#[[ "$(zfs get -H -o value mounted "${username}")" == 'no' ]] && break 
+			{ [[ "$(homectl inspect "${username}" | grep 'State' | sed -E s/'.*State\: '//)" == 'inactive' ]] && ! { dmsetup ls | grep -q -F "home-${username}" || cat /proc/mounts | grep -q -F "/dev/mapper/home-${username}"; }; } && break
+			#[[ "$(zfs get -H -o value mounted "${username}")" == 'no' ]] && break
 			((tries++))
 			sleep 0.2s
 		done
@@ -44,13 +44,14 @@ zfs_homed_umount() {
 
 	[[ "$(zfs get keystatus "${zfsHomedRoot}/${username}/data" -H -o value)" == 'available' ]] && zfs unload-key "${zfsHomedRoot}/${username}/data"
 	
-	[[ "$(homectl inspect "${username}" | grep 'State' | sed -E s/'.*State\: '//)" == 'inactive' ]] || return 1
+	if [[ "$(homectl inspect "${username}" | grep 'State' | sed -E s/'.*State\: '//)" != 'inactive' ]]; then
 	
-	cat /proc/mounts | grep -q -F "/dev/mapper/home-${username}" && umount "/dev/mapper/home-${username}"	
-	cat /proc/mounts | grep -q -F "/dev/mapper/home-${username}" && umount -l "/dev/mapper/home-${username}"
+		cat /proc/mounts | grep -q -F "/dev/mapper/home-${username}" && umount "/dev/mapper/home-${username}"
+		cat /proc/mounts | grep -q -F "/dev/mapper/home-${username}" && umount -l "/dev/mapper/home-${username}"
 	
-	find /dev/mapper -mindepth 1 -maxdepth 1  | grep -q -F "home-${username}" && cryptsetup close "home-${username}"
-	
+		find /dev/mapper -mindepth 1 -maxdepth 1  | grep -q -F "home-${username}" && cryptsetup close "home-${username}"
+	fi
+
 	return 0
 }
 
@@ -92,18 +93,33 @@ tmpfile_wrapper() {
 dbus-monitor --monitor --system "path='/org/freedesktop/home1',member='DeactivateHome'" | while read -r dmsg; do 
 	
 	[[ -z $activateFlag ]] && activateFlag=false
-	
+
+	# line has dbus header. Trip activate flag but dont do anything.
 	echo "${dmsg}" | grep -q "DeactivateHome" && activateFlag=true && continue
+
+	# line has password. remove password from variable memory and continue
 	echo "${dmsg}" | grep -q -E '^string \"\{.*\}\"$' && dmsg="" && continue
 
-	if ${activateFlag}; then
-		if echo "${dmsg}" | grep -q -E '^string \".+\"$'; then
-			tmpfile_wrapper "$(echo "${dmsg}" | sed -E s/'^string \"(.+)\"$'/'\1'/)" 2>/dev/null &
-		else
-			tmpfile_wrapper 2>/dev/null &
-		fi
-	fi
-	activateFlag=false
+	# line has username. Pass it to tmpfile_wrapper, then unset activateFlag.
+	echo "${dmsg}" | grep -q -E '^string \".+\"$' && activateFlag=false &&  tmpfile_wrapper "$(echo "${dmsg}" | sed -E s/'^string \"(.+)\"$'/'\1'/)" 2>/dev/null &
+
+	# if activate flag=true and we got to this point in the loop, it means we have had 2x dbus header lines come without a dbus username line.
+	# Run tmpfile_wrapper without passing a username, then unset activateFlag.
+	${activateFlag} && activateFlag=false && tmpfile_wrapper &
+
+#	[[ -z $activateFlag ]] && activateFlag=false
+#
+#	echo "${dmsg}" | grep -q "DeactivateHome" && activateFlag=true && continue
+#	echo "${dmsg}" | grep -q -E '^string \"\{.*\}\"$' && dmsg="" && continue
+#
+#	if ${activateFlag}; then
+#		if echo "${dmsg}" | grep -q -E '^string \".+\"$'; then
+#			tmpfile_wrapper "$(echo "${dmsg}" | sed -E s/'^string \"(.+)\"$'/'\1'/)" 2>/dev/null &
+#		else
+#			tmpfile_wrapper 2>/dev/null &
+#		fi
+#	fi
+#	activateFlag=false
 done	
 
 return 1
