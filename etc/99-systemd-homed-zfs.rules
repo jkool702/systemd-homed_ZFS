@@ -1,0 +1,2 @@
+#ACTION=="add|change", SUBSYSTEM=="block", TAGS=="systemd", RUN+="/usr/local/bin/zfs-homed-udev-mount.sh %p"
+ACTION=="add|change", SUBSYSTEM=="block", TAGS=="systemd", PROGRAM="/usr/local/bin/my-services.zfs-homed-udev-check.sh", ENV{SYSTEMD_WANTS}="systemd-homed-zfs-udev-mount@%c.service"
